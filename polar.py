@@ -3,9 +3,10 @@ import tensornetwork as tn
 # Polar decomposition
 #############################################################################
 def polarU(A: tn.Tensor, pivot_axis: int = -1):
-  A_mat = A.backend.pivot(A.array, pivot_axis=pivot_axis)
-  W, _, Vh, _ = A.backend.svd(A_mat, pivot_axis=1)
-  U_mat = tn.Tensor(A.backend.matmul(W, Vh), backend=A.backend)
+  A_mat = tn.pivot(A, pivot_axis=pivot_axis)
+  W, _, Vh, _ = A.backend.svd(A_mat.array)
+  Umat_arr = W@Vh
+  U_mat = tn.Tensor(Umat_arr, backend=A.backend)
   U = U_mat.reshape(A.shape)
   return U
 

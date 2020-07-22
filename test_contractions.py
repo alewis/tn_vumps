@@ -6,6 +6,7 @@ import jax
 import tensornetwork as tn
 import tensornetwork.linalg.linalg
 import tn_vumps.contractions as ct
+import tn_vumps.polar as polar
 
 from jax.config import config
 config.update("jax_enable_x64", True)
@@ -228,3 +229,33 @@ def test_compute_hR_vs_expect(backend, dtype, chi, d):
   compare = ct.twositeexpect([A_R, I, A_R], H)
   rtol = (2*A_R.size + I.size + H.size) * np.finfo(dtype).eps
   np.testing.assert_allclose(result.array, compare.array, rtol=rtol)
+
+
+@pytest.mark.parametrize("backend", backends)
+@pytest.mark.parametrize("dtype", dtypes)
+@pytest.mark.parametrize("chi", chis)
+def test_polar(backend, dtype, chi):
+  A = tn.randn((chi, chi), backend=backend, dtype=dtype, seed=10)
+  U = polar.polarU(A)
+  UUdag = U @ U.H
+  UdagU = U.H @ U
+  eye = tn.eye(chi, dtype, backend=backend)
+  atol = A.size * np.finfo(dtype).eps
+  np.testing.assert_allclose(eye.array, UUdag.array, atol=atol)
+  np.testing.assert_allclose(UUdag.array, eye.array, atol=atol)
+
+
+@pytest.mark.parametrize("backend", backends)
+@pytest.mark.parametrize("dtype", dtypes)
+@pytest.mark.parametrize("chi", chis)
+@pytest.mark.parametrize("d", ds)
+def test_polar_mps(backend, dtype, chi, d):
+  A = tn.randn((chi, d, chi), backend=backend, dtype=dtype, seed=10)
+  UR = polar.polarU(A, pivot_axis=1)
+  UL = polar.polarU(A, pivot_axis=2)
+  eye = tn.eye(chi, dtype, backend=backend)
+  testR = ct.XopR(UR, eye)
+  testL = ct.XopL(UL, eye)
+  atol = A.size * np.finfo(dtype).eps
+  np.testing.assert_allclose(eye.array, testR.array, atol=atol)
+  np.testing.assert_allclose(eye.array, testL.array, atol=atol)

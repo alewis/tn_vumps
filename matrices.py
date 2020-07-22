@@ -132,8 +132,7 @@ def H_ising(h: float, J: float = 1., backend: Optional[BackendType] = None,
   X = sigX(backend=backend, dtype=dtype)
   Z = sigZ(backend=backend, dtype=dtype)
   Id = tn.eye(2, backend=backend, dtype=dtype)
-  ham = J*kron(X, X) + h*kron(Z, Id)
-  return ham.reshape((2, 2, 2, 2))
+  return J*tn.kron(X, X) + h*tn.kron(Z, Id)
 
 
 def H_XXZ(delta: float = 1, ud: float = 2., scale: float = 1.,
@@ -152,10 +151,8 @@ def H_XXZ(delta: float = 1, ud: float = 2., scale: float = 1.,
   U = sigU(backend=backend, dtype=dtype)
   D = sigD(backend=backend, dtype=dtype)
   Z = sigZ(backend=backend, dtype=dtype)
-  UD = ud * (kron(U, D) + kron(D, U))
-  H = UD + delta * kron(Z, Z)
-  H *= -(1/(8*scale))
-  return H.reshape((2, 2, 2, 2))
+  UD = ud * (tn.kron(U, D) + tn.kron(D, U))
+  return -(UD + delta * tn.kron(Z, Z))/(8 * scale)
 
 
 def H_XX(backend: Optional[BackendType] = None,
@@ -169,6 +166,4 @@ def H_XX(backend: Optional[BackendType] = None,
   """
   X = sigX(backend=backend, dtype=dtype)
   Y = sigY(backend=backend, dtype=dtype)
-  H = kron(X, X) + kron(Y, Y)
-  print(H)
-  return H.reshape((2, 2, 2, 2))
+  return tn.kron(X, X) + tn.kron(Y, Y).real

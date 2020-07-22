@@ -292,11 +292,11 @@ def gauge_match(A_C: tn.Tensor, C: tn.Tensor,
                           left (right) isometric.
   """
   _ = svd
-  UC = tn_vumps.polar.polarU(C, pivot_axis=1)
-  UAc_l = tn_vumps.polar.polarU(A_C, pivot_axis=2)
+  UC = tn_vumps.polar.polarU(C) # unitary
+  UAc_l = tn_vumps.polar.polarU(A_C) # left isometric
   A_L = ct.rightmult(UAc_l, UC.H)
 
-  UAc_r = tn_vumps.polar.polarU(A_C, pivot_axis=1)
+  UAc_r = tn_vumps.polar.polarU(A_C, pivot_axis=1) # right isometric
   A_R = ct.leftmult(UC.H, UAc_r)
   return (A_L, A_R)
 
@@ -323,8 +323,8 @@ def apply_gradient(iter_data, H, heff_krylov_params, gauge_via_svd):
   timing["Gauge Match"] = benchmark.tock(timing["Gauge Match"], dat=A_L)
 
   timing["Loss"] = benchmark.tick()
-  eL = tn.linalg.linalg.norm(A_C - ct.rightmult(A_L, C))
-  eR = tn.linalg.linalg.norm(A_C - ct.leftmult(C, A_R))
+  eL = tn.norm(A_C - ct.rightmult(A_L, C))
+  eR = tn.norm(A_C - ct.leftmult(C, A_R))
   delta = max(eL, eR)
   timing["Loss"] = benchmark.tock(timing["Loss"], dat=delta)
 
