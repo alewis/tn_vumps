@@ -13,7 +13,6 @@ def polarU(A: tn.Tensor, pivot_axis: int = -1):
 
 
 
-
 #  @jax.jit
 #  def polarjit(A, svd):
 #      U = jax.lax.cond(svd, A, polarU_SVD,

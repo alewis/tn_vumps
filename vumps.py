@@ -16,6 +16,10 @@ import tn_vumps.contractions as ct
 import tn_vumps.polar
 
 Array = Any
+MATVEC_CACHE = {"HAc": dict(),
+                "Hc": dict(),
+                "LH": dict(),
+                "RH": dict()}
 
 ##########################################################################
 ##########################################################################
@@ -139,8 +143,13 @@ def solve_for_LH(A_L: tn.Tensor, H: tn.Tensor, lR: tn.Tensor, params: Dict,
   hL_div = ct.projdiag(hL_bare, lR)
   hL = hL_bare - hL_div
   matvec_args = [lR, A_L]
-  matvec = functools.partial(LH_matvec, backend=A_L.backend)
-  LH, _ = tn.linalg.krylov.gmres(matvec,
+  n_krylov = min(params["n_krylov"], hL.size**2)
+  backend = A_L.backend.name
+  if backend not in MATVEC_CACHE["LH"]:
+    mv = functools.partial(LH_matvec, backend=backend)
+    MATVEC_CACHE["LH"][backend] = mv
+  mv = MATVEC_CACHE["LH"][backend]
+  LH, _ = tn.linalg.krylov.gmres(mv,
                                  hL,
                                  A_args=matvec_args,
                                  x0=oldLH,
@@ -169,8 +178,13 @@ def solve_for_RH(A_R: tn.Tensor, H: tn.Tensor, rL: tn.Tensor, params: Dict,
   hR_div = ct.projdiag(rL, hR_bare)
   hR = hR_bare - hR_div
   matvec_args = [rL, A_R]
-  matvec = functools.partial(RH_matvec, backend=A_R.backend)
-  RH, _ = tn.linalg.krylov.gmres(matvec,
+  n_krylov = min(params["n_krylov"], hR.size**2)
+  backend = A_R.backend.name
+  if backend not in MATVEC_CACHE["RH"]:
+    mv = functools.partial(RH_matvec, backend=backend)
+    MATVEC_CACHE["RH"][backend] = mv
+  mv = MATVEC_CACHE["RH"][backend]
+  RH, _ = tn.linalg.krylov.gmres(mv,
                                  hR,
                                  A_args=matvec_args,
                                  x0=oldRH,
@@ -206,7 +220,7 @@ def minimum_eigenpair(matvec: Callable, mv_args: Sequence, guess: tn.Tensor,
     eV = eV[0]
     Ax = tn.Tensor(matvec(eV.array, *arrays), backend=guess.backend)
     e_eV = ev * eV
-    rho = tn.linalg.linalg.norm(tn.abs(Ax - e_eV))
+    rho = tn.norm(tn.abs(Ax - e_eV))
     err = rho  # / jnp.linalg.norm(e_eV)
     if err <= tol:
       return (ev, eV, err)
@@ -232,12 +246,17 @@ def minimize_HAc(mpslist: Sequence[tn.Tensor], A_C: tn.Tensor,
   The dominant (most negative) eigenvector of HAc.
   """
   A_L, _, A_R = mpslist
+  backend = A_C.backend.name
   tol = params["tol_coef"]*delta
   mv_args = [A_L, A_R, *Hlist]
-  mv = functools.partial(HAc_matvec, backend=A_L.backend)
+  if backend not in MATVEC_CACHE["HAc"]:
+    mv = functools.partial(HAc_matvec, backend=backend)
+    MATVEC_CACHE["HAc"][backend] = mv
+  mv = MATVEC_CACHE["HAc"][backend]
+  n_krylov = min(params["n_krylov"], A_C.size**2)
   ev, newA_C, _ = minimum_eigenpair(mv, mv_args, A_C, tol,
                                     max_restarts=params["max_restarts"],
-                                    n_krylov=params["n_krylov"],
+                                    n_krylov=n_krylov,
                                     reorth=params["reorth"],
                                     n_diag=params["n_diag"])
 
@@ -258,10 +277,15 @@ def minimize_Hc(mpslist: Sequence[tn.Tensor], Hlist: Sequence[tn.Tensor],
   A_L, C, A_R = mpslist
   tol = params["tol_coef"]*delta
   mv_args = [A_L, A_R, *Hlist]
-  mv = functools.partial(Hc_matvec, backend=A_R.backend)
+  backend = A_L.backend.name
+  if backend not in MATVEC_CACHE["Hc"]:
+    mv = functools.partial(Hc_matvec, backend=backend)
+    MATVEC_CACHE["Hc"][backend] = mv
+  mv = MATVEC_CACHE["Hc"][backend]
+  n_krylov = min(params["n_krylov"], C.size**2)
   ev, newC, _ = minimum_eigenpair(mv, mv_args, C, tol,
                                   max_restarts=params["max_restarts"],
-                                  n_krylov=params["n_krylov"],
+                                  n_krylov=n_krylov,
                                   reorth=params["reorth"],
                                   n_diag=params["n_diag"])
   return ev, newC
