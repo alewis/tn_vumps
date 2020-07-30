@@ -2,16 +2,17 @@ import copy
 import os
 import importlib
 import functools
+import time
 
 from typing import Any, Text, Callable, Optional, Dict, Sequence, Tuple
 
 import tensornetwork as tn
 import tensornetwork.linalg.linalg
+import tensornetwork.linalg.krylov
 
 import tn_vumps.writer
 import tn_vumps.params
 import tn_vumps.benchmark as benchmark
-import tn_vumps.environment as environment
 import tn_vumps.contractions as ct
 import tn_vumps.polar
 
@@ -111,9 +112,10 @@ def solve_environment(mpslist: Sequence[tn.Tensor], delta: float,
   A_L, _, A_R = mpslist
   rL, lR = fpoints
 
+  x = 0.
   timing["LH"] = benchmark.tick()
   LH = solve_for_LH(A_L, H, lR, env_params, delta, oldLH=lh)
-  timing["LH"] = benchmark.tock(timing["LH"], dat=LH)
+  timing["LH"] = benchmark.tock(timing["LH"], dat=x)
 
   timing["RH"] = benchmark.tick()
   RH = solve_for_RH(A_R, H, rL, env_params, delta, oldRH=rh)
@@ -124,12 +126,10 @@ def solve_environment(mpslist: Sequence[tn.Tensor], delta: float,
   return (H_env, timing)
 
 
-def LH_matvec(v: Array, lR: Array, A_L: Array, backend: Text) -> Array:
-  v, lR, A_L = [tn.Tensor(a, backend=backend) for a in [v, lR, A_L]]
+def LH_matvec(v: tn.Tensor, lR: tn.Tensor, A_L: tn.Tensor) -> tn.Tensor:
   Th_v = ct.XopL(A_L, v)
   vR = ct.projdiag(v, lR)
-  v = v - Th_v + vR
-  return v.array
+  return v - Th_v + vR
 
 
 def solve_for_LH(A_L: tn.Tensor, H: tn.Tensor, lR: tn.Tensor, params: Dict,
@@ -146,25 +146,28 @@ def solve_for_LH(A_L: tn.Tensor, H: tn.Tensor, lR: tn.Tensor, params: Dict,
   n_krylov = min(params["n_krylov"], hL.size**2)
   backend = A_L.backend.name
   if backend not in MATVEC_CACHE["LH"]:
-    mv = functools.partial(LH_matvec, backend=backend)
-    MATVEC_CACHE["LH"][backend] = mv
+    @functools.partial(tn.jit, backend=backend)
+    def LH_wrapped(v: Array, lR: Array, A_L: Array) -> Array:
+      v, lR, A_L = [tn.Tensor(a, backend=backend) for a in [v, lR, A_L]]
+      v = LH_matvec(v, lR, A_L)
+      return v.array
+    MATVEC_CACHE["LH"][backend] = LH_wrapped
   mv = MATVEC_CACHE["LH"][backend]
+
   LH, _ = tn.linalg.krylov.gmres(mv,
                                  hL,
                                  A_args=matvec_args,
                                  x0=oldLH,
                                  tol=tol,
-                                 num_krylov_vectors=params["n_krylov"],
+                                 num_krylov_vectors=n_krylov,
                                  maxiter=params["max_restarts"])
   return LH
 
 
-def RH_matvec(v: Array, rL: Array, A_R: Array, backend: Text) -> Array:
-  v, rL, A_R = [tn.Tensor(a, backend=backend) for a in [v, rL, A_R]]
+def RH_matvec(v: tn.Tensor, rL: tn.Tensor, A_R: tn.Tensor) -> tn.Tensor:
   Th_v = ct.XopR(A_R, v)
   Lv = ct.projdiag(rL, v)
-  v = v - Th_v + Lv
-  return v.array
+  return v - Th_v + Lv
 
 
 def solve_for_RH(A_R: tn.Tensor, H: tn.Tensor, rL: tn.Tensor, params: Dict,
@@ -181,15 +184,19 @@ def solve_for_RH(A_R: tn.Tensor, H: tn.Tensor, rL: tn.Tensor, params: Dict,
   n_krylov = min(params["n_krylov"], hR.size**2)
   backend = A_R.backend.name
   if backend not in MATVEC_CACHE["RH"]:
-    mv = functools.partial(RH_matvec, backend=backend)
-    MATVEC_CACHE["RH"][backend] = mv
+    @functools.partial(tn.jit, backend=backend)
+    def RH_wrapped(v: Array, rL: Array, A_R: Array) -> Array:
+      v, rL, A_R = [tn.Tensor(a, backend=backend) for a in [v, rL, A_R]]
+      v = RH_matvec(v, rL, A_R)
+      return v.array
+    MATVEC_CACHE["RH"][backend] = RH_wrapped
   mv = MATVEC_CACHE["RH"][backend]
   RH, _ = tn.linalg.krylov.gmres(mv,
                                  hR,
                                  A_args=matvec_args,
                                  x0=oldRH,
                                  tol=tol,
-                                 num_krylov_vectors=params["n_krylov"],
+                                 num_krylov_vectors=n_krylov,
                                  maxiter=params["max_restarts"])
   return RH
 
@@ -507,6 +514,7 @@ def vumps_work(H: tn.Tensor, iter_data: Sequence, vumps_params: Dict,
   E = ct.twositeexpect(mpslist, H).array
   writer.write("Initial energy: " + str(E))
   writer.write("And so it begins...")
+  timings = []
   for Niter in range(Niter0, vumps_params["max_iter"]+Niter0):
     dT = benchmark.tick()
     timing = {}
@@ -521,6 +529,7 @@ def vumps_work(H: tn.Tensor, iter_data: Sequence, vumps_params: Dict,
     timing["Diagnostics"] = tD
     timing["Total"] = benchmark.tock(dT, dat=iter_data[1])
     output(writer, Niter, delta, E, dE, norm, timing)
+    timings.append(timing)
 
     if delta <= vumps_params["gradient_tol"]:
       writer.write("Convergence achieved at iteration " + str(Niter))
@@ -539,6 +548,6 @@ def vumps_work(H: tn.Tensor, iter_data: Sequence, vumps_params: Dict,
   writer.write("Simulation finished. Pickling results.")
   to_pickle = [H, iter_data, vumps_params, heff_params, env_params, Niter]
   writer.pickle(to_pickle, Niter)
-  return (iter_data, timing)
+  return (iter_data, timings)
 ###############################################################################
 ###############################################################################

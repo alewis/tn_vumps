@@ -52,6 +52,7 @@ def gauge_transform(gl: tn. Tensor, A: tn.Tensor, gr: tn.Tensor) -> tn.Tensor:
 ###############################################################################
 # Chain contractors - MPS.
 ###############################################################################
+import numpy as np
 def projdiag(A: tn.Tensor, B: tn.Tensor) -> tn.Tensor:
   """
   2   2
@@ -63,9 +64,14 @@ def projdiag(A: tn.Tensor, B: tn.Tensor) -> tn.Tensor:
   1   1
   Contract A with B to find <A|B>, and put the result on the main diagonal.
   """
-  val = tn.trace(A@B.T)
-  eye = tn.eye(A.shape[0], dtype=A.dtype, backend=A.backend)
-  return val * eye
+  val = tn.linalg.operations.ncon([A, B], [[1, 2], [1, 2]])
+  one = tn.ones(A.shape[0], dtype=A.dtype, backend=A.backend)
+  return tn.diagflat(val*one)
+
+  #eye_arr = np.eye(A.shape[0], dtype=A.dtype)
+  #eye = tn.Tensor(eye_arr, backend=A.backend)
+  #eye = tn.eye(A.shape[0], dtype=A.dtype, backend=A.backend)
+  #return val * eye
 
 
 # ***************************************************************************
