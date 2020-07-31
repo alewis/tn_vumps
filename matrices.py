@@ -132,7 +132,7 @@ def H_ising(h: float, J: float = 1., backend: Optional[BackendType] = None,
   X = sigX(backend=backend, dtype=dtype)
   Z = sigZ(backend=backend, dtype=dtype)
   Id = tn.eye(2, backend=backend, dtype=dtype)
-  return J*tn.kron(X, X) + h*tn.kron(Z, Id)
+  return J*tn.kron(X, X) + 0.5*h*(tn.kron(Z, Id) + tn.kron(Id, Z))
 
 
 def H_XXZ(delta: float = 1, ud: float = 2., scale: float = 1.,
