@@ -22,20 +22,22 @@ MATVEC_CACHE = {"HAc": dict(),
                 "LH": dict(),
                 "RH": dict()}
 
+BENCHMARKER = benchmark.Benchmarker()
+timed = functools.partial(benchmark.timed, benchmarker=BENCHMARKER)
+
 ##########################################################################
 ##########################################################################
 # Functions to handle output.
+@timed
 def diagnostics(mpslist: Sequence[tn.Tensor], H: tn.Tensor,
                 oldE: float) -> Tuple[float, float, tn.Tensor, float]:
   """
   Makes a few computations to output during a vumps run.
   """
-  t0 = benchmark.tick()
   E = ct.twositeexpect(mpslist, H).array
   dE = abs(E - oldE)
   norm = ct.mpsnorm(mpslist)
-  tf = benchmark.tock(t0, dat=norm)
-  return E, dE, norm, tf
+  return E, dE, norm
 
 
 def ostr(string: Text) -> Text:
@@ -45,23 +47,17 @@ def ostr(string: Text) -> Text:
 
 
 def output(writer: tn_vumps.writer.Writer, Niter: int, delta: float, E: float,
-           dE: float, norm: float, timing_data: Optional[Dict] = None) -> None:
+           dE: float, norm: float) -> None:
   """
   Does the actual outputting.
   """
   outstr = "N = " + str(Niter) + "| eps = " + ostr(delta)
   outstr += "| E = " + '{0:1.16f}'.format(E)
   outstr += "| dE = " + ostr(dE)
-  # outstr += "| |B2| = " + ostr(B2)
-  if timing_data is not None:
-    outstr += "| dt= " + ostr(timing_data["Total"])
+  outstr += "| dt= " + ostr(BENCHMARKER.benchmarks["vumps_iteration"][-1])
   writer.write(outstr)
-
   this_output = [Niter, E, delta, norm.array]
   writer.data_write(this_output)
-
-  if timing_data is not None:
-    writer.timing_write(Niter, timing_data)
 
 
 def make_writer(outdir: Optional[Text] = None) -> tn_vumps.writer.Writer:
@@ -87,43 +83,27 @@ def make_writer(outdir: Optional[Text] = None) -> tn_vumps.writer.Writer:
   data_headers = ["N", "E", "|B|", "<psi>"]
   if outdir is None:
     return None
-  timing_headers = ["N", "Total", "Diagnostics", "Iteration",
-                    "Gradient", "HAc", "Hc", "Gauge Match", "Loss",
-                    "Environment", "LH", "RH"]
-  writer = tn_vumps.writer.Writer(outdir, data_headers=data_headers,
-                                  timing_headers=timing_headers)
+  writer = tn_vumps.writer.Writer(outdir, data_headers=data_headers)
   return writer
 
 
 ###############################################################################
 # Effective environment.
 ###############################################################################
+@timed
 def solve_environment(mpslist: Sequence[tn.Tensor], delta: float,
                       fpoints: Sequence[tn.Tensor],
                       H: tn.Tensor, env_params: Dict, H_env: Optional[tn.Tensor]
-                      = None) -> Tuple[tn.Tensor, Dict]:
-  timing = {}
-  timing["Environment"] = benchmark.tick()
+                      = None) -> tn.Tensor:
   if H_env is None:
     H_env = [None, None]
-
   lh, rh = H_env  # lowercase means 'from previous iteration'
-
   A_L, _, A_R = mpslist
   rL, lR = fpoints
-
-  x = 0.
-  timing["LH"] = benchmark.tick()
   LH = solve_for_LH(A_L, H, lR, env_params, delta, oldLH=lh)
-  timing["LH"] = benchmark.tock(timing["LH"], dat=x)
-
-  timing["RH"] = benchmark.tick()
   RH = solve_for_RH(A_R, H, rL, env_params, delta, oldRH=rh)
-  timing["RH"] = benchmark.tock(timing["RH"], dat=RH)
-
   H_env = [LH, RH]
-  timing["Environment"] = benchmark.tock(timing["Environment"], dat=RH)
-  return (H_env, timing)
+  return H_env
 
 
 def LH_matvec(v: tn.Tensor, lR: tn.Tensor, A_L: tn.Tensor) -> tn.Tensor:
@@ -132,6 +112,7 @@ def LH_matvec(v: tn.Tensor, lR: tn.Tensor, A_L: tn.Tensor) -> tn.Tensor:
   return v - Th_v + vR
 
 
+@timed
 def solve_for_LH(A_L: tn.Tensor, H: tn.Tensor, lR: tn.Tensor, params: Dict,
                  delta: float, oldLH: Optional[tn.Tensor] = None) -> tn.Tensor:
   """
@@ -161,6 +142,7 @@ def solve_for_LH(A_L: tn.Tensor, H: tn.Tensor, lR: tn.Tensor, params: Dict,
                                  tol=tol,
                                  num_krylov_vectors=n_krylov,
                                  maxiter=params["max_restarts"])
+  benchmark.block_until_ready(LH)
   return LH
 
 
@@ -170,6 +152,7 @@ def RH_matvec(v: tn.Tensor, rL: tn.Tensor, A_R: tn.Tensor) -> tn.Tensor:
   return v - Th_v + Lv
 
 
+@timed
 def solve_for_RH(A_R: tn.Tensor, H: tn.Tensor, rL: tn.Tensor, params: Dict,
                  delta: float, oldRH: Optional[tn.Tensor] = None) -> tn.Tensor:
   """
@@ -198,6 +181,7 @@ def solve_for_RH(A_R: tn.Tensor, H: tn.Tensor, rL: tn.Tensor, params: Dict,
                                  tol=tol,
                                  num_krylov_vectors=n_krylov,
                                  maxiter=params["max_restarts"])
+  benchmark.block_until_ready(RH)
   return RH
 
 
@@ -206,6 +190,7 @@ def solve_for_RH(A_R: tn.Tensor, H: tn.Tensor, rL: tn.Tensor, params: Dict,
 # Gradient.
 ###############################################################################
 ###############################################################################
+@timed
 def minimum_eigenpair(matvec: Callable, mv_args: Sequence, guess: tn.Tensor,
                       tol: float, max_restarts: int = 100,
                       n_krylov: int = 40, reorth: bool = True, n_diag: int = 10,
@@ -233,6 +218,7 @@ def minimum_eigenpair(matvec: Callable, mv_args: Sequence, guess: tn.Tensor,
       return (ev, eV, err)
   if verbose:
     print("Warning: eigensolve exited early with error=", err)
+  benchmark.block_until_ready(eV)
   return (ev, eV, err)
 
 
@@ -246,6 +232,7 @@ def HAc_matvec(A_C: Array, A_L: Array, A_R: Array, H: Array, LH: Array,
   return result.array
 
 
+@timed
 def minimize_HAc(mpslist: Sequence[tn.Tensor], A_C: tn.Tensor,
                  Hlist: Sequence[tn.Tensor],
                  delta: float, params: Dict) -> Tuple[float, tn.Tensor]:
@@ -266,11 +253,11 @@ def minimize_HAc(mpslist: Sequence[tn.Tensor], A_C: tn.Tensor,
                                     n_krylov=n_krylov,
                                     reorth=params["reorth"],
                                     n_diag=params["n_diag"])
-
   return ev, newA_C
 
 ###############################################################################
 # Hc
+@timed
 def Hc_matvec(C: Array, A_L: Array, A_R: Array, H: Array, LH: Array,
               RH: Array, backend: Text) -> Array:
   arrays = [C, A_L, A_R, H, LH, RH]
@@ -279,6 +266,7 @@ def Hc_matvec(C: Array, A_L: Array, A_R: Array, H: Array, LH: Array,
   return result.array
 
 
+@timed
 def minimize_Hc(mpslist: Sequence[tn.Tensor], Hlist: Sequence[tn.Tensor],
                 delta: float, params: Dict) -> Tuple[float, tn.Tensor]:
   A_L, C, A_R = mpslist
@@ -298,6 +286,7 @@ def minimize_Hc(mpslist: Sequence[tn.Tensor], Hlist: Sequence[tn.Tensor],
   return ev, newC
 
 
+@timed
 def gauge_match(A_C: tn.Tensor, C: tn.Tensor,
                 svd: bool = True) -> Tuple[tn.Tensor, tn.Tensor]:
   """
@@ -332,36 +321,22 @@ def gauge_match(A_C: tn.Tensor, C: tn.Tensor,
   return (A_L, A_R)
 
 
+@timed
 def apply_gradient(iter_data, H, heff_krylov_params, gauge_via_svd):
   """
   Apply the MPS gradient.
   """
-  timing = {}
-  timing["Gradient"] = benchmark.tick()
   mpslist, a_c, _, H_env, delta = iter_data
   LH, RH = H_env
   Hlist = [H, LH, RH]
-  timing["HAc"] = benchmark.tick()
   _, A_C = minimize_HAc(mpslist, a_c, Hlist, delta, heff_krylov_params)
-  timing["HAc"] = benchmark.tock(timing["HAc"], dat=A_C)
-
-  timing["Hc"] = benchmark.tick()
   _, C = minimize_Hc(mpslist, Hlist, delta, heff_krylov_params)
-  timing["Hc"] = benchmark.tock(timing["Hc"], dat=C)
-
-  timing["Gauge Match"] = benchmark.tick()
   A_L, A_R = gauge_match(A_C, C, svd=gauge_via_svd)
-  timing["Gauge Match"] = benchmark.tock(timing["Gauge Match"], dat=A_L)
-
-  timing["Loss"] = benchmark.tick()
   eL = tn.norm(A_C - ct.rightmult(A_L, C))
   eR = tn.norm(A_C - ct.leftmult(C, A_R))
   delta = max(eL, eR)
-  timing["Loss"] = benchmark.tock(timing["Loss"], dat=delta)
-
   newmpslist = [A_L, C, A_R]
-  timing["Gradient"] = benchmark.tock(timing["Gradient"], dat=C)
-  return (newmpslist, A_C, delta, timing)
+  return (newmpslist, A_C, delta)
 ###############################################################################
 ###############################################################################
 
@@ -369,6 +344,7 @@ def apply_gradient(iter_data, H, heff_krylov_params, gauge_via_svd):
 ###############################################################################
 ###############################################################################
 # Main loop and friends.
+@timed
 def vumps_approximate_tm_eigs(C):
   """
   Returns the approximate transfer matrix dominant eigenvectors,
@@ -380,6 +356,7 @@ def vumps_approximate_tm_eigs(C):
   return (rL, lR)
 
 
+@timed
 def vumps_initialization(d: int, chi: int, dtype=None, backend=None):
   """
   Generate a random uMPS in mixed canonical forms, along with the left
@@ -410,28 +387,24 @@ def vumps_initialization(d: int, chi: int, dtype=None, backend=None):
   L0, R0 = vumps_approximate_tm_eigs(C)
   fpoints = (L0, R0)
   mpslist = [A_L, C, A_R]
+  benchmark.block_until_ready(R0)
   return (mpslist, A_C, fpoints)
 
 
+@timed
 def vumps_iteration(iter_data, H, heff_params, env_params, gauge_via_svd):
   """
   One main iteration of VUMPS.
   """
-  timing = {}
-  timing["Iteration"] = benchmark.tick()
-  mpslist, A_C, delta, grad_time = apply_gradient(iter_data, H, heff_params,
-                                                  gauge_via_svd)
-  timing.update(grad_time)
+  mpslist, A_C, delta = apply_gradient(iter_data, H, heff_params, gauge_via_svd)
   fpoints = vumps_approximate_tm_eigs(mpslist[1])
   _, _, _, H_env, _ = iter_data
-  H_env, env_time = solve_environment(mpslist, delta, fpoints, H,
-                                      env_params, H_env=H_env)
+  H_env = solve_environment(mpslist, delta, fpoints, H, env_params, H_env=H_env)
   iter_data = [mpslist, A_C, fpoints, H_env, delta]
-  timing.update(env_time)
-  timing["Iteration"] = benchmark.tock(timing["Iteration"], dat=H_env[0])
-  return (iter_data, timing)
+  return iter_data
 
 
+@timed
 def vumps(H: tn.Tensor, chi: int, delta_0: float = 0.1,
           out_directory: Text = "./vumps",
           vumps_params: Optional[Dict] = None,
@@ -471,6 +444,8 @@ def vumps(H: tn.Tensor, chi: int, delta_0: float = 0.1,
   RETURNS
   -------
   """
+  BENCHMARKER.clear()
+
   if vumps_params is None:
     vumps_params = tn_vumps.params.vumps_params()
   if heff_params is None:
@@ -485,13 +460,12 @@ def vumps(H: tn.Tensor, chi: int, delta_0: float = 0.1,
   writer.write("**************************************************************")
   mpslist, A_C, fpoints = vumps_initialization(d, chi, H.dtype,
                                                backend=H.backend)
-  H_env, env_init_time = solve_environment(mpslist, delta_0,
-                                           fpoints, H, env_params)
+  H_env = solve_environment(mpslist, delta_0, fpoints, H, env_params)
   iter_data = [mpslist, A_C, fpoints, H_env, delta_0]
-  writer.write("Initial solve time: " + str(env_init_time["Environment"]))
   return vumps_work(H, iter_data, vumps_params, heff_params, env_params, writer)
 
 
+@timed
 def vumps_work(H: tn.Tensor, iter_data: Sequence, vumps_params: Dict,
                heff_params: Dict, env_params: Dict,
                writer: tn_vumps.writer.Writer,
@@ -508,46 +482,43 @@ def vumps_work(H: tn.Tensor, iter_data: Sequence, vumps_params: Dict,
   checkpoint_every = vumps_params["checkpoint_every"]
   max_iter = vumps_params["max_iter"]
 
-  t_total = benchmark.tick()
   # mpslist, A_C, fpoints, H_env, delta
   mpslist, _, _, _, delta = iter_data
   E = ct.twositeexpect(mpslist, H).array
   writer.write("Initial energy: " + str(E))
   writer.write("And so it begins...")
-  timings = []
   for Niter in range(Niter0, vumps_params["max_iter"]+Niter0):
-    dT = benchmark.tick()
-    timing = {}
+    BENCHMARKER.increment_timestep()
     oldE = E
-    iter_data, iter_time = vumps_iteration(iter_data, H, heff_params,
-                                           env_params,
-                                           vumps_params["gauge_via_svd"])
+    iter_data = vumps_iteration(iter_data, H, heff_params, env_params,
+                                vumps_params["gauge_via_svd"])
     mpslist, _, _, _, delta = iter_data
-    timing.update(iter_time)
-
-    E, dE, norm, tD = diagnostics(mpslist, H, oldE)
-    timing["Diagnostics"] = tD
-    timing["Total"] = benchmark.tock(dT, dat=iter_data[1])
-    output(writer, Niter, delta, E, dE, norm, timing)
-    timings.append(timing)
+    E, dE, norm = diagnostics(mpslist, H, oldE)
+    output(writer, Niter, delta, E, dE, norm)
 
     if delta <= vumps_params["gradient_tol"]:
       writer.write("Convergence achieved at iteration " + str(Niter))
       break
 
     if checkpoint_every is not None and (Niter+1) % checkpoint_every == 0:
-      writer.write("Checkpointing...")
-      to_pickle = [H, iter_data, vumps_params, heff_params, env_params]
-      to_pickle.append(Niter)
-      writer.pickle(to_pickle, Niter)
+      checkpoint(writer, H, iter_data, vumps_params, heff_params, env_params,
+                 Niter)
 
   if Niter == max_iter - 1:
     writer.write("Maximum iteration " + str(max_iter) + " reached.")
-  t_total = benchmark.tock(t_total, dat=mpslist[0])
+  t_total = sum(BENCHMARKER.benchmarks["vumps_iteration"])
   writer.write("The main loops took " + str(t_total) + " seconds.")
-  writer.write("Simulation finished. Pickling results.")
-  to_pickle = [H, iter_data, vumps_params, heff_params, env_params, Niter]
+  checkpoint(writer, H, iter_data, vumps_params, heff_params, env_params, Niter)
+  return (iter_data, BENCHMARKER.benchmarks)
+
+def checkpoint(writer, H, iter_data, vumps_params, heff_params, env_params,
+               Niter):
+  """
+  Checkpoints the simulation.
+  """
+  writer.write("Checkpointing...")
+  to_pickle = [H, iter_data, vumps_params, heff_params, env_params]
+  to_pickle.append(Niter)
   writer.pickle(to_pickle, Niter)
-  return (iter_data, timings)
 ###############################################################################
 ###############################################################################

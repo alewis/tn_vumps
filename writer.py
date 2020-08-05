@@ -25,9 +25,7 @@ class Writer:
   def __init__(self, dirpath: str,
                consolefilename="console_output.txt",
                datafilename="data.txt",
-               timingfilename="timing.txt",
-               data_headers=None,
-               timing_headers=None):
+               data_headers=None):
     """
     Instantiates the writer and prepares the output directories.
 
@@ -59,9 +57,6 @@ class Writer:
     self.console_file = self._initialize_file(consolefilename)
     self.data_file = self._initialize_file(datafilename,
                                            headers=data_headers)
-    self.timing_file = self._initialize_file(timingfilename,
-                                             headers=timing_headers)
-    self.timing_headers = timing_headers
 
   def _initialize_file(self, filename, headers=None):
     """
@@ -98,25 +93,6 @@ class Writer:
     data = np.array(data)
     to_write = data.reshape((1, data.size))
     with open(self.data_file, "ab") as f:
-      np.savetxt(f, to_write)
-
-  def timing_write(self, Niter, timing_data):
-    """
-    Write the entries in timing_data matching self.timing_headers
-    as a row to the timing file in the appropriate order.
-    """
-    if self.timing_headers is None:
-      raise ValueError("No timing headers specified.")
-    out = [Niter]
-    for key in self.timing_headers:
-      if key != "N":
-        try:
-          out.append(timing_data[key])
-        except KeyError:
-          self.write("Warning: key '"+key+"' wasn't in timing dict.")
-    out = np.array(out)
-    to_write = out.reshape((1, out.size))
-    with open(self.timing_file, "ab") as f:
       np.savetxt(f, to_write)
 
   def pickle(self, to_pickle, timestep: int, name=None):
