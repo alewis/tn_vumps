@@ -17,11 +17,6 @@ import tn_vumps.contractions as ct
 import tn_vumps.polar
 
 Array = Any
-MATVEC_CACHE = {"HAc": dict(),
-                "Hc": dict(),
-                "LH": dict(),
-                "RH": dict()}
-
 BENCHMARKER = benchmark.Benchmarker()
 timed = functools.partial(benchmark.timed, benchmarker=BENCHMARKER)
 
@@ -125,17 +120,7 @@ def solve_for_LH(A_L: tn.Tensor, H: tn.Tensor, lR: tn.Tensor, params: Dict,
   hL = hL_bare - hL_div
   matvec_args = [lR, A_L]
   n_krylov = min(params["n_krylov"], hL.size**2)
-  backend = A_L.backend.name
-  if backend not in MATVEC_CACHE["LH"]:
-    @functools.partial(tn.jit, backend=backend)
-    def LH_wrapped(v: Array, lR: Array, A_L: Array) -> Array:
-      v, lR, A_L = [tn.Tensor(a, backend=backend) for a in [v, lR, A_L]]
-      v = LH_matvec(v, lR, A_L)
-      return v.array
-    MATVEC_CACHE["LH"][backend] = LH_wrapped
-  mv = MATVEC_CACHE["LH"][backend]
-
-  LH, _ = tn.linalg.krylov.gmres(mv,
+  LH, _ = tn.linalg.krylov.gmres(LH_matvec,#mv,
                                  hL,
                                  A_args=matvec_args,
                                  x0=oldLH,
@@ -165,16 +150,7 @@ def solve_for_RH(A_R: tn.Tensor, H: tn.Tensor, rL: tn.Tensor, params: Dict,
   hR = hR_bare - hR_div
   matvec_args = [rL, A_R]
   n_krylov = min(params["n_krylov"], hR.size**2)
-  backend = A_R.backend.name
-  if backend not in MATVEC_CACHE["RH"]:
-    @functools.partial(tn.jit, backend=backend)
-    def RH_wrapped(v: Array, rL: Array, A_R: Array) -> Array:
-      v, rL, A_R = [tn.Tensor(a, backend=backend) for a in [v, rL, A_R]]
-      v = RH_matvec(v, rL, A_R)
-      return v.array
-    MATVEC_CACHE["RH"][backend] = RH_wrapped
-  mv = MATVEC_CACHE["RH"][backend]
-  RH, _ = tn.linalg.krylov.gmres(mv,
+  RH, _ = tn.linalg.krylov.gmres(RH_matvec,
                                  hR,
                                  A_args=matvec_args,
                                  x0=oldRH,
@@ -197,7 +173,6 @@ def minimum_eigenpair(matvec: Callable, mv_args: Sequence, guess: tn.Tensor,
                       verbose: bool
                       = True) -> Tuple[tn.Tensor, tn.Tensor, float]:
   eV = guess
-  arrays = [a.array for a in mv_args]
   for _ in range(max_restarts):
     out = tn.linalg.krylov.eigsh_lanczos(matvec,
                                          backend=eV.backend,
@@ -210,7 +185,7 @@ def minimum_eigenpair(matvec: Callable, mv_args: Sequence, guess: tn.Tensor,
     ev, eV = out
     ev = ev[0]
     eV = eV[0]
-    Ax = tn.Tensor(matvec(eV.array, *arrays), backend=guess.backend)
+    Ax = matvec(eV, *mv_args)
     e_eV = ev * eV
     rho = tn.norm(tn.abs(Ax - e_eV))
     err = rho  # / jnp.linalg.norm(e_eV)
@@ -224,14 +199,6 @@ def minimum_eigenpair(matvec: Callable, mv_args: Sequence, guess: tn.Tensor,
 
 ###############################################################################
 # HAc
-def HAc_matvec(A_C: Array, A_L: Array, A_R: Array, H: Array, LH: Array,
-               RH: Array, backend: Text):
-  arrays = [A_C, A_L, A_R, H, LH, RH]
-  A_C, A_L, A_R, H, LH, RH = [tn.Tensor(a, backend=backend) for a in arrays]
-  result = ct.apply_HAc(A_C, A_L, A_R, H, LH, RH)
-  return result.array
-
-
 @timed
 def minimize_HAc(mpslist: Sequence[tn.Tensor], A_C: tn.Tensor,
                  Hlist: Sequence[tn.Tensor],
@@ -240,15 +207,10 @@ def minimize_HAc(mpslist: Sequence[tn.Tensor], A_C: tn.Tensor,
   The dominant (most negative) eigenvector of HAc.
   """
   A_L, _, A_R = mpslist
-  backend = A_C.backend.name
   tol = params["tol_coef"]*delta
   mv_args = [A_L, A_R, *Hlist]
-  if backend not in MATVEC_CACHE["HAc"]:
-    mv = functools.partial(HAc_matvec, backend=backend)
-    MATVEC_CACHE["HAc"][backend] = mv
-  mv = MATVEC_CACHE["HAc"][backend]
   n_krylov = min(params["n_krylov"], A_C.size**2)
-  ev, newA_C, _ = minimum_eigenpair(mv, mv_args, A_C, tol,
+  ev, newA_C, _ = minimum_eigenpair(ct.apply_HAc, mv_args, A_C, tol,
                                     max_restarts=params["max_restarts"],
                                     n_krylov=n_krylov,
                                     reorth=params["reorth"],
@@ -272,13 +234,8 @@ def minimize_Hc(mpslist: Sequence[tn.Tensor], Hlist: Sequence[tn.Tensor],
   A_L, C, A_R = mpslist
   tol = params["tol_coef"]*delta
   mv_args = [A_L, A_R, *Hlist]
-  backend = A_L.backend.name
-  if backend not in MATVEC_CACHE["Hc"]:
-    mv = functools.partial(Hc_matvec, backend=backend)
-    MATVEC_CACHE["Hc"][backend] = mv
-  mv = MATVEC_CACHE["Hc"][backend]
   n_krylov = min(params["n_krylov"], C.size**2)
-  ev, newC, _ = minimum_eigenpair(mv, mv_args, C, tol,
+  ev, newC, _ = minimum_eigenpair(ct.apply_Hc, mv_args, C, tol,
                                   max_restarts=params["max_restarts"],
                                   n_krylov=n_krylov,
                                   reorth=params["reorth"],
@@ -288,7 +245,7 @@ def minimize_Hc(mpslist: Sequence[tn.Tensor], Hlist: Sequence[tn.Tensor],
 
 @timed
 def gauge_match(A_C: tn.Tensor, C: tn.Tensor,
-                svd: bool = True) -> Tuple[tn.Tensor, tn.Tensor]:
+                mode: Text = "svd") -> Tuple[tn.Tensor, tn.Tensor]:
   """
   Return approximately gauge-matched A_L and A_R from A_C and C
   using a polar decomposition.
@@ -311,18 +268,17 @@ def gauge_match(A_C: tn.Tensor, C: tn.Tensor,
                           and ||A_C - C A_R||, with A_L and A_R
                           left (right) isometric.
   """
-  _ = svd
-  UC = tn_vumps.polar.polarU(C) # unitary
-  UAc_l = tn_vumps.polar.polarU(A_C) # left isometric
+  UC = tn_vumps.polar.polarU(C, mode=mode) # unitary
+  UAc_l = tn_vumps.polar.polarU(A_C, mode=mode) # left isometric
   A_L = ct.rightmult(UAc_l, UC.H)
 
-  UAc_r = tn_vumps.polar.polarU(A_C, pivot_axis=1) # right isometric
+  UAc_r = tn_vumps.polar.polarU(A_C, pivot_axis=1, mode=mode) # right isometric
   A_R = ct.leftmult(UC.H, UAc_r)
   return (A_L, A_R)
 
 
 @timed
-def apply_gradient(iter_data, H, heff_krylov_params, gauge_via_svd):
+def apply_gradient(iter_data, H, heff_krylov_params, gauge_match_mode):
   """
   Apply the MPS gradient.
   """
@@ -331,7 +287,7 @@ def apply_gradient(iter_data, H, heff_krylov_params, gauge_via_svd):
   Hlist = [H, LH, RH]
   _, A_C = minimize_HAc(mpslist, a_c, Hlist, delta, heff_krylov_params)
   _, C = minimize_Hc(mpslist, Hlist, delta, heff_krylov_params)
-  A_L, A_R = gauge_match(A_C, C, svd=gauge_via_svd)
+  A_L, A_R = gauge_match(A_C, C, mode=gauge_match_mode)
   eL = tn.norm(A_C - ct.rightmult(A_L, C))
   eR = tn.norm(A_C - ct.leftmult(C, A_R))
   delta = max(eL, eR)
@@ -392,11 +348,12 @@ def vumps_initialization(d: int, chi: int, dtype=None, backend=None):
 
 
 @timed
-def vumps_iteration(iter_data, H, heff_params, env_params, gauge_via_svd):
+def vumps_iteration(iter_data, H, heff_params, env_params, gauge_match_mode):
   """
   One main iteration of VUMPS.
   """
-  mpslist, A_C, delta = apply_gradient(iter_data, H, heff_params, gauge_via_svd)
+  mpslist, A_C, delta = apply_gradient(iter_data, H, heff_params,
+                                       gauge_match_mode)
   fpoints = vumps_approximate_tm_eigs(mpslist[1])
   _, _, _, H_env, _ = iter_data
   H_env = solve_environment(mpslist, delta, fpoints, H, env_params, H_env=H_env)
@@ -491,7 +448,7 @@ def vumps_work(H: tn.Tensor, iter_data: Sequence, vumps_params: Dict,
     BENCHMARKER.increment_timestep()
     oldE = E
     iter_data = vumps_iteration(iter_data, H, heff_params, env_params,
-                                vumps_params["gauge_via_svd"])
+                                vumps_params["gauge_match_mode"])
     mpslist, _, _, _, delta = iter_data
     E, dE, norm = diagnostics(mpslist, H, oldE)
     output(writer, Niter, delta, E, dE, norm)

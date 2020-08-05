@@ -39,8 +39,7 @@ def gmres_params(n_krylov=40, max_restarts=10, tol_coef=0.01):
     tol_coef (float): This number times the MPS gradient will set the
                       convergence threshold of the linear solve.
 
-
-    RETURNS
+RETURNS
     -------
     A dictionary storing each of these parameters.
     """
@@ -69,8 +68,8 @@ def lgmres_params(inner_m=30, outer_k=3, maxiter=100, tol_coef=0.01):
             "outer_k": outer_k, "tol_coef": tol_coef}
 
 
-def vumps_params(checkpoint_every=500, gauge_via_svd=True, gradient_tol=1E-3,
-                 max_iter=200):
+def vumps_params(checkpoint_every=500, gauge_match_mode="svd",
+                 gradient_tol=1E-3, max_iter=200):
     """
     Bundles parameters for the vumps solver itself.
 
@@ -83,7 +82,7 @@ def vumps_params(checkpoint_every=500, gauge_via_svd=True, gradient_tol=1E-3,
     checkpoint_every (int) : Simulation data is pickled at this periodicity.
     out_directory (string) : Output is saved here. The directory is created
                              if it doesn't exist.
-    gauge_via_svd (bool, True): With the Jax backend, toggles whether the gauge
+    gauge_match_mode (bool, True): With the Jax backend, toggles whether the gauge
                                 match at the
                                 end of each iteration is computed using
                                 an SVD or the QDWH-based polar decomposition.
@@ -99,5 +98,5 @@ def vumps_params(checkpoint_every=500, gauge_via_svd=True, gradient_tol=1E-3,
     """
 
     return {"checkpoint_every": checkpoint_every,
-            "gauge_via_svd": gauge_via_svd,
+            "gauge_match_mode": gauge_match_mode,
             "gradient_tol": gradient_tol, "max_iter": max_iter}

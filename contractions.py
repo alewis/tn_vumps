@@ -198,12 +198,11 @@ def apply_HAc(A_C: tn.Tensor, A_L: tn.Tensor, A_R: tn.Tensor,
   return A_C_prime
 
 
-def apply_Hc(C: tn.Tensor, A_L: tn.Tensor, A_R: tn.Tensor,
-             Hlist: tn.Tensor) -> tn.Tensor:
+def apply_Hc(C: tn.Tensor, A_L: tn.Tensor, A_R: tn.Tensor, H: tn.Tensor,
+             LH: tn.Tensor, RH: tn.Tensor) -> tn.Tensor:
   """
   Compute C' via eq 16 of vumps paper (132 of tangent space methods).
   """
-  H, LH, RH = Hlist
   A_Lstar = A_L.conj()
   A_C = rightmult(A_L, C)
   to_contract = [A_C, A_Lstar, A_R, A_R.conj(), H]
