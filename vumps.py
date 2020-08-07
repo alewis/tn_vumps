@@ -177,7 +177,7 @@ def minimum_eigenpair(matvec: Callable, mv_args: Sequence, guess: tn.Tensor,
     out = tn.linalg.krylov.eigsh_lanczos(matvec,
                                          backend=eV.backend,
                                          args=mv_args,
-                                         initial_state=eV,
+                                         x0=eV,
                                          numeig=1,
                                          num_krylov_vecs=n_krylov,
                                          ndiag=n_diag,
@@ -219,15 +219,6 @@ def minimize_HAc(mpslist: Sequence[tn.Tensor], A_C: tn.Tensor,
 
 ###############################################################################
 # Hc
-@timed
-def Hc_matvec(C: Array, A_L: Array, A_R: Array, H: Array, LH: Array,
-              RH: Array, backend: Text) -> Array:
-  arrays = [C, A_L, A_R, H, LH, RH]
-  C, A_L, A_R, H, LH, RH = [tn.Tensor(a, backend=backend) for a in arrays]
-  result = ct.apply_Hc(C, A_L, A_R, [H, LH, RH])
-  return result.array
-
-
 @timed
 def minimize_Hc(mpslist: Sequence[tn.Tensor], Hlist: Sequence[tn.Tensor],
                 delta: float, params: Dict) -> Tuple[float, tn.Tensor]:
