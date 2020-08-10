@@ -1,4 +1,4 @@
-from typing import Text
+from typing import Text, Sequence
 import functools
 import jax
 import jax.numpy as jnp
@@ -7,11 +7,24 @@ import scipy
 import scipy.linalg
 import tensornetwork as tn
 
+
 #############################################################################
 # Polar decomposition
 #############################################################################
 def polarU(A: tn.Tensor, pivot_axis: int = -1, mode: Text = "svd",
-           Niter: int = 4):
+           Niter: int = 4) -> tn.Tensor:
+  """
+  Computes the isometric factor U in the polar decomposition, U = u @ vh
+  where u and vh are the singular vector matrices in the SVD.
+  Args:
+    A: The input tensor.
+    pivot_axis: Determines where to matricize A.
+    mode: Algorithm used for the decomposition. See vumps_params.
+    Niter: Maximum number of iteration allotted the QDWH algorithm.
+  Returns:
+    U: The decomposed tensor, reshaped to A.shape.
+  """
+
   A_mat = tn.pivot(A, pivot_axis=pivot_axis)
   if mode == "svd":
     W, _, Vh, _ = A.backend.svd(A_mat.array)
@@ -25,7 +38,7 @@ def polarU(A: tn.Tensor, pivot_axis: int = -1, mode: Text = "svd",
   return U
 
 
-def polarU_QDWH(A, Niter=4):
+def polarU_QDWH(A: tn.Tensor, Niter=4) -> tn.Tensor:
   """
   Computes the isometric factor U in the polar decomposition, U = u @ vh
   where u and vh are the singular vector matrices in the SVD.
@@ -44,15 +57,11 @@ def polarU_QDWH(A, Niter=4):
   CPU or TPU.
 
 
-  PARAMETERS
-  ----------
-  A: The matrix to be decomposed.
-  Niter: The number of QDWH iterations.
-
-
-  RETURNS
-  -------
-  U: The approximate polar factor.
+  Args:
+    A: The matrix to be decomposed.
+    Niter: The number of QDWH iterations.
+  Returns:
+    U: The approximate polar factor.
   """
   m, n = A.shape
   if n > m:
@@ -69,17 +78,22 @@ def polarU_QDWH(A, Niter=4):
 
 
 @functools.partial(jax.jit, static_argnums=(1,))
-def jax_qdwh(A, Niter):
+def jax_qdwh(A: jax.ShapedArray, Niter: int) -> jax.ShapedArray:
   """
   Implements the QDWH polar decomposition.
+  Args:
+    A: Array to be decomposed.
+    Niter: Number of iterations. No more than 6 should be required in principle.
+  Returns:
+    X: The polar factor.
   """
   alpha = jnp.linalg.norm(A)
   lcond = 1E-6
   X = A / alpha
 
-  def hl(l):
-    d = (4*(1 - l**2)/(l**4))**(1/3)
-    f = 8*(2 - l**2)/(l**2 * (1 + d)**(1/2))
+  def hl(L):
+    d = (4*(1 - L**2)/(L**4))**(1/3)
+    f = 8*(2 - L**2)/(L**2 * (1 + d)**(1/2))
     h = (1 + d)**(1/2) + 0.5 * (8 - 4*d + f)**0.5
     return h
 
@@ -100,10 +114,16 @@ def jax_qdwh(A, Niter):
 
 
 @jax.jit
-def jax_iterationChol(args):
+def jax_iterationChol(args: Sequence) -> jax.ShapedArray:
   """
   One iteration of the QDWH polar decomposition, using the cheaper but
   less stable Cholesky factorization method.
+  Args:
+    args = (X, a, b, c):
+      X: Polar factor at this iteration.
+      a, b, c: Coefficients for the QDWH equations.
+  Returns:
+    X: The updated polar factor.
   """
   X, a, b, c = args
   _, n = X.shape
@@ -118,10 +138,16 @@ def jax_iterationChol(args):
 
 
 @jax.jit
-def jax_iterationQR(args):
+def jax_iterationQR(args: Sequence) -> jax.ShapedArray:
   """
   One iteration of the QDWH polar decomposition, using the more expensive
   but more stable QR factorization method.
+  Args:
+    args = (X, a, b, c):
+      X: Polar factor at this iteration.
+      a, b, c: Coefficients for the QDWH equations.
+  Returns:
+    X: The updated polar factor.
   """
   X, a, b, c = args
   m, n = X.shape
@@ -136,17 +162,22 @@ def jax_iterationQR(args):
   return X
 
 
-def np_qdwh(A, Niter):
+def np_qdwh(A: np.ndarray, Niter: int) -> np.ndarray:
   """
   Implements the QDWH polar decomposition.
+  Args:
+    A: Array to be decomposed.
+    Niter: Number of iterations. No more than 6 should be required in principle.
+  Returns:
+    X: The polar factor.
   """
   alpha = np.linalg.norm(A)
   lcond = 1E-6
   X = A / alpha
 
-  def hl(l):
-    d = (4*(1 - l**2)/(l**4))**(1/3)
-    f = 8*(2 - l**2)/(l**2 * (1 + d)**(1/2))
+  def hl(L):
+    d = (4*(1 - L**2)/(L**4))**(1/3)
+    f = 8*(2 - L**2)/(L**2 * (1 + d)**(1/2))
     h = (1 + d)**(1/2) + 0.5 * (8 - 4*d + f)**0.5
     return h
 
@@ -162,10 +193,15 @@ def np_qdwh(A, Niter):
   return X
 
 
-def np_iterationChol(X, a, b, c):
+def np_iterationChol(X: np.ndarray, a: float, b: float, c: float) -> np.ndarray:
   """
   One iteration of the QDWH polar decomposition, using the cheaper but
   less stable Cholesky factorization method.
+  Args:
+    X: Polar factor at this iteration.
+    a, b, c: Coefficients for the QDWH equations.
+  Returns:
+    X: The updated polar factor.
   """
   _, n = X.shape
   eye = np.eye(n, dtype=X.dtype)
@@ -178,10 +214,15 @@ def np_iterationChol(X, a, b, c):
   return X
 
 
-def np_iterationQR(X, a, b, c):
+def np_iterationQR(X: np.ndarray, a: float, b: float, c: float) -> np.ndarray:
   """
   One iteration of the QDWH polar decomposition, using the more expensive
   but more stable QR factorization method.
+  Args:
+    X: Polar factor at this iteration.
+    a, b, c: Coefficients for the QDWH equations.
+  Returns:
+    X: The updated polar factor.
   """
   m, n = X.shape
   eye = np.eye(n)

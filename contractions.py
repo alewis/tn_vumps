@@ -12,9 +12,9 @@ Conventions
       |                |
       2             1--A--3
 """
-from typing import Sequence
+from typing import Tuple
 import tensornetwork as tn
-
+ThreeTensors = Tuple[tn.Tensor, tn.Tensor, tn.Tensor]
 
 
 def leftmult(lam: tn.Tensor, gam: tn.Tensor) -> tn.Tensor:
@@ -49,16 +49,16 @@ def gauge_transform(gl: tn. Tensor, A: tn.Tensor, gr: tn.Tensor) -> tn.Tensor:
   glA = leftmult(gl, A)
   return rightmult(glA, gr)
 
+
 ###############################################################################
 # Chain contractors - MPS.
 ###############################################################################
-import numpy as np
 def projdiag(A: tn.Tensor, B: tn.Tensor) -> tn.Tensor:
   """
   2   2
   |---|
   |   |
-  A   B  \otimes   I(\chi, \chi)
+  A   B  otimes I(chi, chi)
   |   |
   |---|
   1   1
@@ -67,11 +67,6 @@ def projdiag(A: tn.Tensor, B: tn.Tensor) -> tn.Tensor:
   val = tn.linalg.operations.ncon([A, B], [[1, 2], [1, 2]])
   one = tn.ones(A.shape[0], dtype=A.dtype, backend=A.backend)
   return tn.diagflat(val*one)
-
-  #eye_arr = np.eye(A.shape[0], dtype=A.dtype)
-  #eye = tn.Tensor(eye_arr, backend=A.backend)
-  #eye = tn.eye(A.shape[0], dtype=A.dtype, backend=A.backend)
-  #return val * eye
 
 
 # ***************************************************************************
@@ -176,7 +171,14 @@ def compute_hR(A_R: tn.Tensor, htilde: tn.Tensor) -> tn.Tensor:
 def apply_HAc(A_C: tn.Tensor, A_L: tn.Tensor, A_R: tn.Tensor,
               H: tn.Tensor, LH: tn.Tensor, RH: tn.Tensor) -> tn.Tensor:
   """
-  Compute A'C via eq 11 of vumps paper (131 of tangent space methods).
+  Apply the effective Hamiltonian for A_C.
+  Args:
+    A_C: Current A_C.
+    A_L, A_R: From the MPS.
+    H: Two-site local Hamiltonian.
+    LH, RH: Environment Hamiltonians.
+  Returns:
+    A_C_prime: Action of the effective Hamiltonian.
   """
   to_contract_1 = [A_L, A_L.conj(), A_C, H]
   idxs_1 = [(1, 2, 4),
@@ -201,7 +203,14 @@ def apply_HAc(A_C: tn.Tensor, A_L: tn.Tensor, A_R: tn.Tensor,
 def apply_Hc(C: tn.Tensor, A_L: tn.Tensor, A_R: tn.Tensor, H: tn.Tensor,
              LH: tn.Tensor, RH: tn.Tensor) -> tn.Tensor:
   """
-  Compute C' via eq 16 of vumps paper (132 of tangent space methods).
+  Apply the effective Hamiltonian for C.
+  Args:
+    C: Current C.
+    A_L, A_R: From the MPS.
+    H: Two-site local Hamiltonian.
+    LH, RH: Environment Hamiltonians.
+  Returns:
+    C_prime: Action of the effective Hamiltonian.
   """
   A_Lstar = A_L.conj()
   A_C = rightmult(A_L, C)
@@ -218,17 +227,18 @@ def apply_Hc(C: tn.Tensor, A_L: tn.Tensor, A_R: tn.Tensor, H: tn.Tensor,
   return C_prime
 
 
-#TODO:jit
-def twositeexpect(mpslist, H):
+def twositeexpect(mps: ThreeTensors, H: tn.Tensor) -> tn.Tensor:
   """
   The expectation value of the operator H in the state represented
-  by A_L, C, A_R in mpslist.
+  by A_L, C, A_R in mps.
+  Args:
+    mps: The MPS.
+    H: The two-site operator.
 
-  RETURNS
-  -------
-  out: The expectation value.
+  Returns:
+    out: The expectation value.
   """
-  A_L, C, A_R = mpslist
+  A_L, C, A_R = mps
   A_CR = leftmult(C, A_R)
   d = H.shape[0]
   rho = rholoc(A_L, A_CR).reshape((d, d, d, d))
@@ -238,9 +248,15 @@ def twositeexpect(mpslist, H):
   return expect
 
 
-#TODO: jit
-def mpsnorm(mpslist):
-  A_L, C, A_R = mpslist
+def mpsnorm(mps: ThreeTensors) -> tn.Tensor:
+  """
+  Norm of the MPS.
+  Args:
+    mps: The MPS.
+  Returns:
+    norm: Its norm.
+  """
+  A_L, C, A_R = mps
   A_CR = leftmult(C, A_R)
   rho = rholoc(A_L, A_CR)
   the_norm = tn.abs(tn.trace(rho))

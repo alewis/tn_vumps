@@ -14,13 +14,6 @@ DtypeType = Any
 ###############################################################################
 # PAULI MATRICES
 ###############################################################################
-
-def kron(A: tn.Tensor, B: tn.Tensor):
-  shp = np.multiply(A.shape, B.shape)
-  arr = A.backend.einsum('ij,kl->ikjl', A.array, B.array).reshape(shp)
-  return tn.Tensor(arr, backend=A.backend)
-
-
 def sigX(backend: Optional[BackendType] = None,
          dtype: Optional[DtypeType] = None) -> tn.Tensor:
   """

@@ -1,104 +1,127 @@
 """
 Interface functions for VUMPS.
 """
-import sys
-import os
+from typing import Optional, Dict, Text, Tuple, Any
 import numpy as np
-
 import pickle as pkl
-
 import tn_vumps.matrices as mat
 import tn_vumps.vumps as vumps
-import tn_vumps.params as params
+import tensornetwork as tn
 
 
-def runvumps(H, bond_dimension: int, delta_0=0.1,
-             out_directory="./vumps_output",
-             vumps_params=None,
-             heff_params=None,
-             env_params=None):
+def runvumps(H: tn.Tensor, bond_dimension: int,
+             out_directory: Text = "./vumps_output",
+             vumps_params: Optional[Dict] = None,
+             heff_params: Optional[Dict] = None,
+             env_params: Optional[Dict] = None) -> Tuple[Dict, Dict]:
   """
-  Performs a vumps simulation of some Hamiltonian H.
+  Performs a vumps simulation of some two-site local Hamiltonian H.
 
-  PARAMETERS
-  ----------
-  H (array, dxdxdxd): The Hamiltonian to be simulated.
-  bond_dimension (int): Bond dimension of the MPS.
-  delta_0 (float)        : Initial value for the gradient norm. The
-                           convergence thresholds of the various solvers at
-                           the initial step are proportional to this, via
-                           coefficients in the Krylov and solver param dicts.
-  out_directory (string) : Output is saved here. The directory is created
-                           if it doesn't exist.
-  jax_linalg (bool)   : Determines whether Jax or numpy code is used in
-                        certain linear algebra calls.
-  vumps_params (dict)    : Hyperparameters for the vumps solver. Formed
-                           by 'vumps_params'.
-  heff_params (dict)     : Hyperparameters for an eigensolve of certain
-                           'effective Hamiltonians'. Formed by
-                           'krylov_params()'.
-  env_params (dict)      : Hyperparameters for a linear solve that finds
-                           the effective Hamiltonians. Formed by
-                           'solver_params()'.
+  Args:
+    H: The Hamiltonian to be simulated.
+    bond_dimension: Bond dimension of the MPS.
+    out_directory: Output is saved here. The directory is created
+      if it doesn't exist.
+    vumps_params: Hyperparameters for the vumps solver. Formed
+      by 'vumps_params'.
+    heff_params: Hyperparameters for an eigensolve of certain
+      'effective Hamiltonians'. Formed by 'krylov_params()'.
+    env_params: Hyperparameters for a linear solve that finds the effective
+      Hamiltonians. Formed by 'solver_params()'.
+  Returns:
+    iter_data, timings.
+    iter_data: Dictionary of data carried between vuMPS iterations.
+      - mps = (A_L, C, A_R): The MPS tensors.
+      - A_C: The estimate of A_C. Once converged, and only then, we have
+         A_C = A_L @ C = C @ A_R.
+      -fpoints = (rL, lR): The right dominant eigentensor of A_L, and the left
+         dominant eigentensor of A_R.
+      -H_env = (LH, RH): The left and right environment Hamiltonians.
+      -delta: The error estimate of the vuMPS run. The exact meaning of this
+         quantity depends on the choice of
+         vumps_params["gradient_estimate_mode"], but when small it will be
+         proportional to the MPS gradient.
+    timings: A dictionary of timings-per-timestep for each of various functions.
   """
-  out = vumps.vumps(H, bond_dimension, delta_0=delta_0,
-                    out_directory=out_directory,
-                    vumps_params=vumps_params,
-                    heff_params=heff_params,
+  out = vumps.vumps(H, bond_dimension, out_directory=out_directory,
+                    vumps_params=vumps_params, heff_params=heff_params,
                     env_params=env_params)
   return out
 
 
-def vumps_XX(bond_dimension: int, delta_0=0.1,
-             out_directory="./vumps", backend="numpy",
-             dtype=np.float32,
-             vumps_params=None,
-             heff_params=None,
-             env_params=None):
+def vumps_XX(bond_dimension: int,
+             out_directory: Text = "./vumps",
+             backend: Text = "numpy", dtype: Any = np.float32,
+             vumps_params: Optional[Dict] = None,
+             heff_params: Optional[Dict] = None,
+             env_params: Optional[Dict] = None) -> Tuple[Dict, Dict]:
   """
   Performs a vumps simulation of the XX model,
-  H = XX + YY. Parameters are the same as in runvumps.
+  H = XX + YY.
+  Args:
+    bond_dimension: Of the MPS.
+    out_directory: Location of output.
+    backend: The backend, "numpy" or "jax".
+    dtype: The dtype.
+    vumps_params: For the vumps solver.
+    heff_params: For the Lanczos solver.
+    env_params: For the linear solver.
+  Returns:
+    iter_data, timings.
   """
   H = mat.H_XX(backend=backend, dtype=dtype)
-  out = runvumps(H, bond_dimension, delta_0=delta_0,
+  out = runvumps(H, bond_dimension,
                  out_directory=out_directory,
                  vumps_params=vumps_params, heff_params=heff_params,
                  env_params=env_params)
   return out
 
 
-def vumps_ising(J, h, bond_dimension: int, delta_0=0.1,
-                out_directory="./vumps", backend="numpy",
-                dtype=np.float32,
-                vumps_params=None,
-                heff_params=None,
-                env_params=None):
+def vumps_ising(J: float, h: float, bond_dimension: int,
+                out_directory: Text = "./vumps",
+                backend: Text = "numpy", dtype: Any = np.float32,
+                vumps_params: Optional[Dict] = None,
+                heff_params: Optional[Dict] = None,
+                env_params: Optional[Dict] = None) -> Tuple[Dict, Dict]:
   """
-  Performs a vumps simulation of the XX model,
-  H = XX + YY. Parameters are the same as in runvumps.
+  Performs a vumps simulation of the Ising model,
+  H = J * XX + h * ZI
+  Args:
+    J, h: Hamiltonian parameters.
+    bond_dimension: Of the MPS.
+    out_directory: Location of output.
+    backend: The backend, "numpy" or "jax".
+    dtype: The dtype.
+    vumps_params: For the vumps solver.
+    heff_params: For the Lanczos solver.
+    env_params: For the linear solver.
+  Returns:
+    iter_data, timings.
   """
   H = mat.H_ising(h, J=J, backend=backend, dtype=dtype)
-  out = runvumps(H, bond_dimension, delta_0=delta_0,
+  out = runvumps(H, bond_dimension,
                  out_directory=out_directory,
                  vumps_params=vumps_params, heff_params=heff_params,
                  env_params=env_params)
   return out
 
 
-def vumps_from_checkpoint(checkpoint_path, out_directory="./vumps_load",
-                          new_vumps_params=None, new_heff_params=None,
-                          new_env_params=None):
+def vumps_from_checkpoint(checkpoint_path: Text,
+                          out_directory: Text = "./vumps_load",
+                          new_vumps_params: Optional[Dict] = None,
+                          new_heff_params: Optional[Dict] = None,
+                          new_env_params: Optional[Dict] = None):
   """
-  Find the ground state of a uniform two-site Hamiltonian
-  using Variational Uniform Matrix Product States. This is a gradient
-  descent method minimizing the distance between a given MPS and the
-  best approximation to the physical ground state at its bond dimension.
+  Resumes a vuMPS simulation from checkpointed data, optionally with new
+  simulation parameters.
 
-  This interface function initializes vumps from checkpointed data.
-
-  PARAMETERS
-  ----------
-  checkpoint_path (string): Path to the checkpoint .pkl file.
+  Args:
+    checkpoint_path: Path to the checkpoint .pkl file.
+    out_directory: Where to save the new data.
+    new_vumps_params, new_heff_params, new_env_params: Optional new
+      parameter dicts.
+  Returns:
+    iter_data, timings.
   """
   writer = vumps.make_writer(out_directory)
   with open(checkpoint_path, "rb") as f:
