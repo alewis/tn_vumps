@@ -234,3 +234,26 @@ def np_iterationQR(X: np.ndarray, a: float, b: float, c: float) -> np.ndarray:
   X *= (b/c)
   X += (1/np.sqrt(c)) * (a - b/c) * Q1 @ Q2.T.conj()
   return X
+
+
+def null_space(A: tn.Tensor) -> tn.Tensor:
+  """
+  Returns the null space of the matrix A.
+  Args:
+    A: The tensor.
+    pivot_axis: Where to matricize.
+  Returns:
+    The null space, shaped as a matrix.
+  """
+  if A.backend.name == "numpy":
+    N_arr = scipy.linalg.null_space(A.array)
+  elif A.backend.name == "jax":
+    U, S, Vh = jnp.linalg.svd(A.array, full_matrices=True)
+    M, N = U.shape[0], Vh.shape[1]
+    rcond = np.finfo(A.dtype).eps * max(M, N)
+    tol = jnp.amax(S) * rcond
+    num = jnp.sum(S > tol, dtype=int)
+    N_arr = Vh[num:, :].T.conj()
+  else:
+    raise ValueError(f"Unsupported backend {A.backend.name}.")
+  return tn.Tensor(N_arr, backend=A.backend)

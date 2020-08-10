@@ -370,12 +370,14 @@ def gauge_match(A_C: tn.Tensor, C: tn.Tensor, mode: Text = "svd") -> TwoTensors:
 
 
 @timed
-def vumps_delta(mps: ThreeTensors, A_C: tn.Tensor, mode: Text):
+def vumps_delta(mps: ThreeTensors, A_C: tn.Tensor, oldA_L: tn.Tensor,
+                mode: Text):
   """
   Estimate the current vuMPS error.
   Args:
     mps: The MPS.
     A_C: Current A_C.
+    oldA_L: A_L from the last iteration.
     mode: gradient_estimate_mode in vumps_params. See that docstring for
       details.
   """
@@ -385,18 +387,17 @@ def vumps_delta(mps: ThreeTensors, A_C: tn.Tensor, mode: Text):
     eR = tn.norm(A_C - ct.leftmult(C, A_R))
     delta = max(eL, eR)
   elif mode == "null space":
-    A_Ldag = tn.pivot(mps[0], pivot_axis=2).H
-    tol = np.finfo(A_Ldag.dtype).eps * max(A_Ldag.shape)
-    _, _, _, N_L = tn.linalg.linalg.svd(A_Ldag, max_truncation_error=tol,
-                                        relative=True)
-    print("N_L:", N_L.shape)
+    A_Ldag = tn.pivot(oldA_L, pivot_axis=2).H
+    N_Ldag = tn_vumps.polar.null_space(A_Ldag)
+    N_L = N_Ldag.H
     A_Cmat = tn.pivot(A_C, pivot_axis=2)
-    print(A_Cmat.shape)
-    B = N_L.H @ A_Cmat
-    delta = norm(B)
+    B = N_L @ A_Cmat
+    delta = tn.norm(B)
   else:
     raise ValueError("Invalid mode {mode}.")
   return delta
+
+
 
 
 @timed
@@ -421,7 +422,8 @@ def apply_gradient(iter_data: Dict, H: tn.Tensor, heff_params: Dict,
   _, C = minimize_Hc(mps, Hlist, delta, heff_params)
   A_L, A_R = gauge_match(A_C, C, mode=vumps_params["gauge_match_mode"])
   newmps = (A_L, C, A_R)
-  delta = vumps_delta(newmps, A_C, mode=vumps_params["gradient_estimate_mode"])
+  delta = vumps_delta(newmps, A_C, mps[0],
+                      mode=vumps_params["gradient_estimate_mode"])
   return newmps, A_C, delta
 ###############################################################################
 ###############################################################################
